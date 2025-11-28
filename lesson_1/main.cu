@@ -1,13 +1,15 @@
 #include <stdio.h>
 
-__global__ void print_hw(void)
-{
-    printf("GPU: hello world!");
+
+__global__ void helloFromGPU(void){
+    printf("Hello world from GPU \n")
 }
 
-int main()
-{
-    printf("CPU: hello world");
-    print_hw<<<1, 10>>>();
-    cudaDeviceReset();
+
+int main(){
+
+
+
+    helloFromGPU<<<1,10>>>();
+    cudaDeviceResrt();
 }
