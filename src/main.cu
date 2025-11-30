@@ -34,9 +34,9 @@ int main()
 
     // 申请device内存
     float *d_x, *d_y, *d_z;
-    cudaMalloc((void**)&d_x, nBytes);
-    cudaMalloc((void**)&d_y, nBytes);
-    cudaMalloc((void**)&d_z, nBytes);
+    cudaMalloc((float**)&d_x, nBytes);
+    cudaMalloc((float**)&d_y, nBytes);
+    cudaMalloc((float**)&d_z, nBytes);
 
     // 将host数据拷贝到device
     cudaMemcpy((void*)d_x, (void*)x, nBytes, cudaMemcpyHostToDevice);
@@ -48,7 +48,7 @@ int main()
     add<<<gridSize, blockSize>>>(d_x, d_y, d_z, N);
 
     // 将device得到的结果拷贝到host
-    cudaMemcpy((void*)z, (void*)d_z, nBytes, cudaMemcpyDeviceToHost);
+    cudaMemcpy(static_cast<void*>(z), static_cast<void*>(d_z), nBytes, cudaMemcpyDeviceToHost);
 
     // 检查执行结果
     float maxError = 0.0;
