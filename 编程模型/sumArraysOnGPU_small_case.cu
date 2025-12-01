@@ -5,6 +5,10 @@
 #include <string.h>
 #include <time.h>
 
+/*
+数组加法
+*/
+
 void sumArrayOnHost(float* A, float* B, float* C, const int N)
 {
     for (int i = 0; i < N; i++) {

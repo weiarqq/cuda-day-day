@@ -2,6 +2,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/time.h>
+
+
+/*
+用CPU计时器计时
+*/
+
 #ifndef MY_MACROS_H // 头文件保护（防止重复包含）
 #define MY_MACROS_H
 
