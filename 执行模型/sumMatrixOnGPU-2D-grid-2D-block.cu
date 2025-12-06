@@ -15,7 +15,7 @@ void sumMatrixOnHost(float* A, float* B, float* C, const int nx, const int ny)
     float *ic = C;
     for(int iy=0; iy < ny; iy ++){
         for (int ix = 0; ix < nx; ix++) {
-            ic[ix] = ia[ix] + ib[x];
+            ic[ix] = ia[ix] + ib[iElaps];
         }
         ia += nx;
         ib += nx;
