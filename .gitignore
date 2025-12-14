@@ -80,6 +80,9 @@
 
 # debug information files
 *.dwo
+*.ncu-rep
+*.nsys-rep
+*.sqlite
 
 .Ds_store
 .vscode
