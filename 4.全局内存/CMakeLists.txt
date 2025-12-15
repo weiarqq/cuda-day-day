@@ -46,9 +46,15 @@ if(ENABLE_CUDA_DEBUG)
     set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
 else()
     set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
+    # set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo -Xptxas -dlcm=cg") # add line information to all builds for debug tools (exclusive to -G option)
 endif()
 
 
 set(COMMON_FILES common.cpp)
 
 add_executable(memTransfer memTransfer.cu ${COMMON_FILES})
+add_executable(pinMemTransfer pinMemTransfer.cu ${COMMON_FILES})
+add_executable(sumArrayZerocopy sumArrayZerocopy.cu ${COMMON_FILES})
+add_executable(sumArrayZerocopyUVA sumArrayZerocopyUVA.cu ${COMMON_FILES})
+add_executable(readSegment readSegment.cu ${COMMON_FILES})
+add_executable(writeSegment writeSegment.cu ${COMMON_FILES})
