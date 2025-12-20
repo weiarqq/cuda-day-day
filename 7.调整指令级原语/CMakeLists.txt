@@ -45,7 +45,7 @@ set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcompiler ${OpenMP_CXX_FLAGS}")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
 
 # 调试/发布模式的CUDA编译选项
-option(ENABLE_CUDA_DEBUG "Enable CUDA debug (cuda-gdb)" OFF)
+option(ENABLE_CUDA_DEBUG "Enable CUDA debug (cuda-gdb)" ON)
 if(ENABLE_CUDA_DEBUG)
     set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
 else()
@@ -59,13 +59,9 @@ endif()
 
 set(COMMON_FILES common.cpp)
 
-
-add_subdirectory(2.编程模型)
-add_subdirectory(3.执行模型)
-add_subdirectory(4.全局内存)
-add_subdirectory(5.共享缓存和常量内存)
-add_subdirectory(6.流和并发)
-add_subdirectory(7.调整指令级原语)
-add_subdirectory(8.GPU加速库和openACC)
-add_subdirectory(9.多GPU编程)
-add_subdirectory(10.程序实现的注意事项)
+add_executable(atomic-ordering atomic-ordering.cu  ${COMMON_FILES})
+add_executable(floating-point-accuracy floating-point-accuracy.cu  ${COMMON_FILES})
+add_executable(floating-point-perf floating-point-perf.cu  ${COMMON_FILES})
+add_executable(fmad fmad.cu ${COMMON_FILES})
+add_executable(intrinsic-standard-comp intrinsic-standard-comp.cu ${COMMON_FILES})
+add_executable(my-atomic-add my-atomic-add.cu ${COMMON_FILES})

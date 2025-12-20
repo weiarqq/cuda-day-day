@@ -23,4 +23,6 @@ void initialData(float* ip, int size);
 
 void checkResultOffset(float* hostRef, float* gpuRef, const int N, const int offset);
 
-void printData(float* in, const int size);
+void printData(const char* msg, int* in, const int size);
+
+void printData(const char* msg, float* in, const int size);

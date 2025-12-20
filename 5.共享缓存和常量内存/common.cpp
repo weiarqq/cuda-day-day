@@ -52,11 +52,27 @@ void checkResultOffset(float* hostRef, float* gpuRef, const int N, const int off
     return;
 }
 
-void printData(float* in, const int size)
+void printData(const char* msg, int* in, const int size)
 {
+    printf("%s: ", msg);
+
     for (int i = 0; i < size; i++) {
-        printf("%dth element: %f\n", i, in[i]);
+        printf("%5d", in[i]);
+        fflush(stdout);
     }
 
+    printf("\n");
+    return;
+}
+
+void printData(const char* msg, float* in, const int size)
+{
+    printf("%s: ", msg);
+
+    for (int i = 0; i < size; i++) {
+        printf("%3.0f ", in[i]);
+    }
+
+    printf("\n");
     return;
 }

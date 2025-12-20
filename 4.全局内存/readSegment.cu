@@ -37,7 +37,7 @@ int main(int argc, char** argv)
     // printf("Use Device: %d %s\n", dev, deviceProp.name);
     CHECK(cudaSetDevice(dev));
 
-    int nElem = 1 << 20;
+    int nElem = 1 << 22;
     int nBytes = nElem * sizeof(float);
     printf("Vector size %d nbytes  %3.0f MB\n", nElem,
         (float)nBytes / (1024.0f * 1024.0f));
@@ -78,7 +78,7 @@ int main(int argc, char** argv)
     warmup<<<grid, block>>>(d_A, d_B, d_C, nElem, offset);
     CHECK(cudaDeviceSynchronize());
     iElaps = cpuSecond() - iStart;
-    // printf("warmup <<<(%d, %d), (%d, %d)>>> elapsed %fsec\n", grid.x, grid.y, block.x, block.y, iElaps);
+    printf("warmup <<<(%d, %d), (%d, %d)>>> elapsed %fsec\n", grid.x, grid.y, block.x, block.y, iElaps);
     CHECK(cudaGetLastError());
 
     iStart = cpuSecond();
