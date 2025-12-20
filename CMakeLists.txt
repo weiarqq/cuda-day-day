@@ -4,7 +4,7 @@ project(cuda-day-day VERSION 0.1.0 LANGUAGES C CXX CUDA)
 
 # 查询 cudatoolkit
 find_package(CUDAToolkit REQUIRED)
-find_package(OpenMP REQUIRED)
+# find_package(OpenMP REQUIRED)
 
 if (CMAKE_CUDA_COMPILER)
     message(STATUS "nvcc path : ${CMAKE_CUDA_COMPILER}")
@@ -15,8 +15,8 @@ endif ()
 # 指定C++标准（CUDA也继承此标准）
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CUDA_STANDARD 17)  # 显式指定CUDA标准
-set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+# set(CMAKE_CUDA_STANDARD 17)  # 显式指定CUDA标准
+# set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 
 # CUDA架构（推荐用target属性，而非全局变量）
 set(CMAKE_CUDA_ARCHITECTURES 89)
@@ -43,11 +43,15 @@ endfunction()
 
 set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcompiler ${OpenMP_CXX_FLAGS}")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
+# add_definitions("-g -G") # 添加调试标志
+
 
 # 调试/发布模式的CUDA编译选项
-option(ENABLE_CUDA_DEBUG "Enable CUDA debug (cuda-gdb)" OFF)
+option(ENABLE_CUDA_DEBUG "Enable CUDA debug (cuda-gdb)" ON)
 if(ENABLE_CUDA_DEBUG)
-    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -g -G")        # enable cuda-gdb (may significantly affect performance on some targets)
+    message("CUDA compiler:" ${CMAKE_CUDA_FLAGS})
+    message("CPP compiler:" ${CMAKE_CXX_FLAGS})
 else()
     set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo") # add line information to all builds for debug tools (exclusive to -G option)
     # set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -lineinfo -Xptxas -dlcm=cg") # add line information to all builds for debug tools (exclusive to -G option)
@@ -66,6 +70,6 @@ add_subdirectory(4.全局内存)
 add_subdirectory(5.共享缓存和常量内存)
 add_subdirectory(6.流和并发)
 add_subdirectory(7.调整指令级原语)
-add_subdirectory(8.GPU加速库和openACC)
-add_subdirectory(9.多GPU编程)
-add_subdirectory(10.程序实现的注意事项)
+# add_subdirectory(8.GPU加速库和openACC)
+# add_subdirectory(9.多GPU编程)
+# add_subdirectory(10.程序实现的注意事项)
