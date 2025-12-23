@@ -28,49 +28,49 @@ set_target_properties(cublas PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
-add_executable(cuda-openacc cuda-openacc.cu)
-target_link_libraries(cuda-openacc PRIVATE ${CUBLAS_LIB} ${CURAND_LIB})
-set_target_properties(cuda-openacc PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
-)
+# add_executable(cuda-openacc cuda-openacc.cu)
+# target_link_libraries(cuda-openacc PRIVATE ${CUBLAS_LIB} ${CURAND_LIB})
+# set_target_properties(cuda-openacc PROPERTIES
+#     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+# )
 
-add_executable(cufft-multi cufft-multi.cu)
-target_link_libraries(cufft-multi PRIVATE ${CUFFT_LIB})
-set_target_properties(cufft-multi PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
-)
+# add_executable(cufft-multi cufft-multi.cu)
+# target_link_libraries(cufft-multi PRIVATE ${CUFFT_LIB})
+# set_target_properties(cufft-multi PROPERTIES
+#     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+# )
 
-add_executable(cufft cufft.cu)
-target_link_libraries(cufft PRIVATE ${CUFFT_LIB})
-set_target_properties(cufft PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
-)
+# add_executable(cufft cufft.cu)
+# target_link_libraries(cufft PRIVATE ${CUFFT_LIB})
+# set_target_properties(cufft PROPERTIES
+#     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+# )
 
-add_executable(cusparse cusparse.cu)
-target_link_libraries(cusparse PRIVATE ${CUSPARSE_LIB})
-set_target_properties(cusparse PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
-)
+# add_executable(cusparse cusparse.cu)
+# target_link_libraries(cusparse PRIVATE ${CUSPARSE_LIB})
+# set_target_properties(cusparse PROPERTIES
+#     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+# )
 
-add_executable(rand-kernel rand-kernel.cu)
-target_link_libraries(rand-kernel PRIVATE ${CURAND_LIB})
-set_target_properties(rand-kernel PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
-)
+# add_executable(rand-kernel rand-kernel.cu)
+# target_link_libraries(rand-kernel PRIVATE ${CURAND_LIB})
+# set_target_properties(rand-kernel PROPERTIES
+#     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+# )
 
-add_executable(replace-rand-streams replace-rand-streams.cu)
-target_link_libraries(replace-rand-streams PRIVATE ${CURAND_LIB})
-set_target_properties(replace-rand-streams PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
-)
+# add_executable(replace-rand-streams replace-rand-streams.cu)
+# target_link_libraries(replace-rand-streams PRIVATE ${CURAND_LIB})
+# set_target_properties(replace-rand-streams PROPERTIES
+#     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+# )
 
-add_executable(replace-rand replace-rand.cu)
-target_link_libraries(replace-rand PRIVATE ${CURAND_LIB})
-set_target_properties(replace-rand PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
-)
+# add_executable(replace-rand replace-rand.cu)
+# target_link_libraries(replace-rand PRIVATE ${CURAND_LIB})
+# set_target_properties(replace-rand PROPERTIES
+#     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+# )
 
-add_executable(simple-data simple-data.c  ${COMMON_FILES})
-add_executable(simple-kernels simple-kernels.c  ${COMMON_FILES})
-add_executable(simple-parallel simple-parallel.c  ${COMMON_FILES})
+# add_executable(simple-data simple-data.c  ${COMMON_FILES})
+# add_executable(simple-kernels simple-kernels.c  ${COMMON_FILES})
+# add_executable(simple-parallel simple-parallel.c  ${COMMON_FILES})
 

@@ -1,4 +1,4 @@
-#include "../common/common.h"
+#include "common.h"
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -27,8 +27,8 @@
  * This implementation makes use of shared memory and local reduction to improve
  * performance and decrease contention
  **/
-__global__ void simple_reduction(int *shared_var, int *input_values, int N,
-                                 int iters)
+__global__ void simple_reduction(int* shared_var, int* input_values, int N,
+    int iters)
 {
     __shared__ int local_mem[256];
     int iter, i;
@@ -38,15 +38,12 @@ __global__ void simple_reduction(int *shared_var, int *input_values, int N,
     int minThreadInThisBlock = blockIdx.x * blockDim.x;
     int maxThreadInThisBlock = minThreadInThisBlock + (blockDim.x - 1);
 
-    if (maxThreadInThisBlock >= N)
-    {
+    if (maxThreadInThisBlock >= N) {
         local_dim = N - minThreadInThisBlock;
     }
 
-    for (iter = 0; iter < iters; iter++)
-    {
-        if (tid < N)
-        {
+    for (iter = 0; iter < iters; iter++) {
+        if (tid < N) {
             local_mem[local_tid] = input_values[tid];
         }
 
@@ -57,12 +54,10 @@ __global__ void simple_reduction(int *shared_var, int *input_values, int N,
          * Perform the local reduction across values written to shared memory
          * by threads in this thread block.
          */
-        if (local_tid == 0)
-        {
+        if (local_tid == 0) {
             int sum = 0;
 
-            for (i = 0; i < local_dim; i++)
-            {
+            for (i = 0; i < local_dim; i++) {
                 sum = sum + local_mem[i];
             }
 
@@ -74,7 +69,7 @@ __global__ void simple_reduction(int *shared_var, int *input_values, int N,
     }
 }
 
-int main(int argc, char **argv)
+int main(int argc, char** argv)
 {
     int N = 20480;
     int block = 256;
@@ -85,37 +80,34 @@ int main(int argc, char **argv)
     int h_sum;
     double mean_time = 0.0;
 
-    CHECK(cudaMalloc((void **)&d_shared_var, sizeof(int)));
-    CHECK(cudaMalloc((void **)&d_input_values, N * sizeof(int)));
-    h_input_values = (int *)malloc(N * sizeof(int));
+    CHECK(cudaMalloc((void**)&d_shared_var, sizeof(int)));
+    CHECK(cudaMalloc((void**)&d_input_values, N * sizeof(int)));
+    h_input_values = (int*)malloc(N * sizeof(int));
 
-    for (i = 0; i < N; i++)
-    {
+    for (i = 0; i < N; i++) {
         h_input_values[i] = i;
         true_value += i;
     }
 
     true_value *= device_iters;
 
-    for (i = 0; i < runs; i++)
-    {
+    for (i = 0; i < runs; i++) {
         CHECK(cudaMemset(d_shared_var, 0x00, sizeof(int)));
         CHECK(cudaMemcpy(d_input_values, h_input_values, N * sizeof(int),
-                         cudaMemcpyHostToDevice));
-        double start = seconds();
+            cudaMemcpyHostToDevice));
+        double start = cpuSecond();
 
         simple_reduction<<<N / block, block>>>(d_shared_var,
-                d_input_values, N, device_iters);
+            d_input_values, N, device_iters);
 
         CHECK(cudaDeviceSynchronize());
-        mean_time += seconds() - start;
+        mean_time += cpuSecond() - start;
         CHECK(cudaMemcpy(&h_sum, d_shared_var, sizeof(int),
-                         cudaMemcpyDeviceToHost));
+            cudaMemcpyDeviceToHost));
 
-        if (h_sum != true_value)
-        {
+        if (h_sum != true_value) {
             fprintf(stderr, "Validation failure: expected %d, got %d\n",
-                    true_value, h_sum);
+                true_value, h_sum);
             return 1;
         }
     }
@@ -123,7 +115,7 @@ int main(int argc, char **argv)
     mean_time /= runs;
 
     printf("Mean execution time for reduction: %.4f ms\n",
-           mean_time * 1000.0);
+        mean_time * 1000.0);
 
     return 0;
 }

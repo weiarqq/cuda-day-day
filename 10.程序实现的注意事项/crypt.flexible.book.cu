@@ -4,24 +4,18 @@
 #include <stdlib.h>
 #include <string.h>
 
-/*
- * The crypt application implements IDEA encryption and decryption of a single
- * input file using the secret key provided.
- */
 
-// Chunking size for IDEA, in bytes
 #define CHUNK_SIZE 8
-// Length of the encryption/decryption keys, in bytes
 #define KEY_LENGTH 52
 #define BLOCK_SIZE_IN_CHUNKS 1024000
-// Length of the secret key, in bytes
 #define USERKEY_LENGTH 8
 #define BITS_PER_BYTE 8
-struct device_context {
+
+typedef struct _device_context {
     signed char *dPlain, *dCrypt;
     cudaStream_t* streams;
     int nBlocks;
-};
+} device_context;
 
 typedef enum { ENCRYPT,
     DECRYPT } action;
@@ -109,7 +103,8 @@ static void h_encrypt_decrypt(signed char* plain, signed char* crypt, int* key,
 static void init_context(device_context* ctx, int plainLength)
 {
     signed char *dPlain, *dCrypt;
-    int nBlocks, d;
+    cudaStream_t* streams;
+    int nBlocks, b;
 
     if (plainLength % CHUNK_SIZE != 0) {
         fprintf(stderr, "Invalid encryption: length of plain must be an even "
@@ -117,15 +112,21 @@ static void init_context(device_context* ctx, int plainLength)
             CHUNK_SIZE, plainLength);
         exit(-1);
     }
+
+    CHECK(cudaMalloc((void**)&dPlain,
+        plainLength * sizeof(signed char)));
+    CHECK(cudaMalloc((void**)&dCrypt,
+        plainLength * sizeof(signed char)));
+
     int nChunks = plainLength / CHUNK_SIZE;
     nBlocks = (nChunks + BLOCK_SIZE_IN_CHUNKS - 1) / BLOCK_SIZE_IN_CHUNKS;
-    cudaMalloc((signed char**)&dPlain, plainLength * sizeof(unsigned char));
-    cudaMalloc((signed char**)&dCrypt, plainLength * sizeof(unsigned char));
 
-    cudaStream_t* streams = new cudaStream_t[nBlocks];
-    for (d = 0; d < nBlocks; d++) {
-        cudaStreamCreate(streams + d);
+    streams = (cudaStream_t*)malloc(sizeof(cudaStream_t) * nBlocks);
+
+    for (b = 0; b < nBlocks; b++) {
+        CHECK(cudaStreamCreate(streams + b));
     }
+
     ctx->dPlain = dPlain;
     ctx->dCrypt = dCrypt;
     ctx->streams = streams;
@@ -137,38 +138,54 @@ static void encrypt_decrypt_driver(signed char* plain, signed char* crypt,
     int plainLength, int nThreadsPerBlock,
     device_context* ctx)
 {
-    int d = 0;
+    int b;
+
     cudaDeviceProp info;
     CHECK(cudaGetDeviceProperties(&info, 0));
-    int nChunk = plainLength / CHUNK_SIZE;
-    int nThreadBlocks = (nChunk + nThreadsPerBlock - 1) / nThreadsPerBlock;
+    int nChunks = plainLength / CHUNK_SIZE;
+    int nThreadBlocks = (nChunks + nThreadsPerBlock - 1) / nThreadsPerBlock;
+
     if (nThreadBlocks > info.maxGridSize[0]) {
         nThreadBlocks = info.maxGridSize[0];
     }
-    cudaMemcpyToSymbolAsync(dkey, key, KEY_LENGTH * sizeof(unsigned char), 0, cudaMemcpyHostToDevice, (ctx->streams[0]));
-    cudaStreamSynchronize(ctx->streams[0]);
-    for (d = 0; d < ctx->nBlocks; d++) {
-        int blockOffset = d * BLOCK_SIZE_IN_CHUNKS * CHUNK_SIZE;
+
+    CHECK(cudaMemcpyToSymbolAsync(dkey, key, KEY_LENGTH * sizeof(int), 0,
+        cudaMemcpyHostToDevice, (ctx->streams)[0]));
+    CHECK(cudaStreamSynchronize((ctx->streams)[0]));
+
+    for (b = 0; b < ctx->nBlocks; b++) {
+        int blockOffset = b * BLOCK_SIZE_IN_CHUNKS * CHUNK_SIZE;
         int localChunks = BLOCK_SIZE_IN_CHUNKS;
 
-        if (d * BLOCK_SIZE_IN_CHUNKS + localChunks > nChunk) {
-            localChunks = nChunk - d * BLOCK_SIZE_IN_CHUNKS;
+        if (b * BLOCK_SIZE_IN_CHUNKS + localChunks > nChunks) {
+            localChunks = nChunks - b * BLOCK_SIZE_IN_CHUNKS;
         }
-        cudaMemcpyAsync(ctx->dPlain + blockOffset, plain + blockOffset, localChunks * CHUNK_SIZE * sizeof(signed char), cudaMemcpyHostToDevice,
-            ctx->streams[d]);
-        dim3 block(nThreadsPerBlock);
-        dim3 grid((localChunks + nThreadsPerBlock - 1) / nThreadsPerBlock);
-        d_encrypt_decrypt<<<grid, block, 0, ctx->streams[d]>>>(ctx->dPlain + blockOffset, ctx->dCrypt + blockOffset, localChunks);
-        cudaMemcpyAsync(crypt + blockOffset, ctx->dCrypt + blockOffset, localChunks * CHUNK_SIZE * sizeof(signed char), cudaMemcpyDeviceToHost, ctx->streams[d]);
+
+        CHECK(cudaMemcpyAsync(ctx->dPlain + blockOffset, plain + blockOffset,
+            localChunks * CHUNK_SIZE * sizeof(signed char),
+            cudaMemcpyHostToDevice, (ctx->streams)[b]));
+
+        d_encrypt_decrypt<<<nThreadBlocks, nThreadsPerBlock, 0,
+            (ctx->streams)[b]>>>(ctx->dPlain + blockOffset,
+            ctx->dCrypt + blockOffset, localChunks);
+        CHECK(cudaMemcpyAsync(crypt + blockOffset, ctx->dCrypt + blockOffset,
+            localChunks * CHUNK_SIZE * sizeof(signed char),
+            cudaMemcpyDeviceToHost, (ctx->streams)[b]));
     }
 }
 
 static void cleanup_context(device_context* ctx)
 {
-    for (int d = 0; d < ctx->nBlocks; d++) {
-        cudaStreamDestroy(ctx->streams[d]);
+    int b;
+
+    for (b = 0; b < ctx->nBlocks; b++) {
+        CHECK(cudaStreamDestroy(ctx->streams[b]));
     }
-    // delete[] ctx;
+
+    free(ctx->streams);
+
+    CHECK(cudaFree(ctx->dPlain));
+    CHECK(cudaFree(ctx->dCrypt));
 }
 
 /*
@@ -441,20 +458,25 @@ int main(int argc, char** argv)
             textLen, overall_ms,
             ((float)textLen / overall_ms) / 1024.0f);
     } else {
-        device_context* ctx = new device_context[nDevices];
+        int d;
+
         int nTotalChunks = textLen / CHUNK_SIZE;
         int chunksPerDevice = (nTotalChunks + nDevices - 1) / nDevices;
-        int d;
+
+        device_context* ctxs = (device_context*)malloc(nDevices * sizeof(device_context));
+
         for (d = 0; d < nDevices; d++) {
-            cudaSetDevice(d);
+            CHECK(cudaSetDevice(d));
+            int start = d * chunksPerDevice * CHUNK_SIZE;
             int len = chunksPerDevice * CHUNK_SIZE;
-            int start = d * len;
+
             if (start + len > textLen) {
                 len = textLen - start;
             }
 
-            init_context(ctx + d, len);
+            init_context(ctxs + d, len);
         }
+
         CHECK(cudaEventCreate(&startEvent));
         CHECK(cudaEventCreate(&finishEvent));
 
@@ -466,13 +488,16 @@ int main(int argc, char** argv)
         CHECK(cudaEventRecord(startEvent));
 
         for (d = 0; d < nDevices; d++) {
-            cudaSetDevice(d);
+            CHECK(cudaSetDevice(d));
+            int start = d * chunksPerDevice * CHUNK_SIZE;
             int len = chunksPerDevice * CHUNK_SIZE;
-            int start = d * len;
+
             if (start + len > textLen) {
                 len = textLen - start;
             }
-            encrypt_decrypt_driver(text + start, crypt + start, key, len, nThreadsPerBlock, ctx + d);
+
+            encrypt_decrypt_driver(text + start, crypt + start, key, len,
+                nThreadsPerBlock, ctxs + d);
         }
 
         CHECK(cudaEventRecord(finishEvent));
@@ -488,7 +513,7 @@ int main(int argc, char** argv)
         for (d = 0; d < nDevices; d++) {
             // Clean up any CUDA resource allocated for this device.
             CHECK(cudaSetDevice(d));
-            cleanup_context(ctx + d);
+            cleanup_context(ctxs + d);
         }
 
         float gpuElapsed;
@@ -501,8 +526,7 @@ int main(int argc, char** argv)
             textLen, overall_elapsed_ms, nDevices);
         printf("Aggregate bandwith = %.4f KB/ms\n",
             (float)(textLen / 1024) / overall_elapsed_ms);
-        // free(ctx);
-        delete[] ctx;
+        free(ctxs);
     }
 
     if (fwrite(crypt, sizeof(signed char), textLen, out) != textLen) {

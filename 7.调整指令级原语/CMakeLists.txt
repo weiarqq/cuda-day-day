@@ -1,4 +1,4 @@
-
+set(COMMON_FILES common.cpp)
 
 add_executable(atomic-ordering atomic-ordering.cu  ${COMMON_FILES})
 add_executable(floating-point-accuracy floating-point-accuracy.cu  ${COMMON_FILES})

@@ -1,0 +1,18 @@
+./generate_user_key key
+./generate_data data 1073741824
+
+crypt.legacy.cu
+
+crypt.parallelized.cu
+
+crypt.overlap.cu  使用CUDA流重叠
+
+crypt.constant.cu 使用常量内存缓存key
+
+crypt.config.cu 动态传入blockDim.x
+
+crypt.flexibel.cu
+
+crypt.openmp.cu
+
+

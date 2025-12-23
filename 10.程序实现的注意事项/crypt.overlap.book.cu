@@ -17,24 +17,17 @@
 // Length of the secret key, in bytes
 #define USERKEY_LENGTH 8
 #define BITS_PER_BYTE 8
-struct device_context {
-    signed char *dPlain, *dCrypt;
-    cudaStream_t* streams;
-    int nBlocks;
-};
 
 typedef enum { ENCRYPT,
     DECRYPT } action;
-
-__constant__ int dkey[KEY_LENGTH];
 
 /*
  * doCrypt implements the core logic of IDEA. It iterates over the byte
  * chunks stored in plainList and outputs their encrypted/decrypted form to the
  * corresponding element in cryptList using the secret key provided.
  */
-__host__ __device__ void doCrypt(int chunk, signed char* plain,
-    signed char* crypt, int* key)
+__device__ void doCrypt(int chunk, signed char* plain, signed char* crypt,
+    int* key)
 {
     long x1, x2, x3, x4, t1, t2, ik, r;
 
@@ -84,32 +77,27 @@ __host__ __device__ void doCrypt(int chunk, signed char* plain,
     crypt[chunk * CHUNK_SIZE + 7] = (signed char)((unsigned long)x4 >> BITS_PER_BYTE);
 }
 
-__global__ void d_encrypt_decrypt(signed char* plain, signed char* crypt,
+__global__ void encrypt_decrypt(signed char* plain, signed char* crypt,
+    int* key,
     int nChunks)
 {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
     int nthreads = blockDim.x * gridDim.x;
 
     for (; tid < nChunks; tid += nthreads) {
-        doCrypt(tid, plain, crypt, dkey);
+        doCrypt(tid, plain, crypt, key);
     }
 }
 
-static void h_encrypt_decrypt(signed char* plain, signed char* crypt, int* key,
+static void encrypt_decrypt_driver(signed char* plain, signed char* crypt,
+    int* key,
     int plainLength)
 {
-    int c;
-    int nChunks = plainLength / CHUNK_SIZE;
-
-    for (c = 0; c < nChunks; c++) {
-        doCrypt(c, plain, crypt, key);
-    }
-}
-
-static void init_context(device_context* ctx, int plainLength)
-{
+    cudaEvent_t start, *finishes;
+    cudaStream_t* streams;
+    int nChunks, b, nBlocks;
     signed char *dPlain, *dCrypt;
-    int nBlocks, d;
+    int* dKey;
 
     if (plainLength % CHUNK_SIZE != 0) {
         fprintf(stderr, "Invalid encryption: length of plain must be an even "
@@ -117,58 +105,83 @@ static void init_context(device_context* ctx, int plainLength)
             CHUNK_SIZE, plainLength);
         exit(-1);
     }
-    int nChunks = plainLength / CHUNK_SIZE;
-    nBlocks = (nChunks + BLOCK_SIZE_IN_CHUNKS - 1) / BLOCK_SIZE_IN_CHUNKS;
-    cudaMalloc((signed char**)&dPlain, plainLength * sizeof(unsigned char));
-    cudaMalloc((signed char**)&dCrypt, plainLength * sizeof(unsigned char));
 
-    cudaStream_t* streams = new cudaStream_t[nBlocks];
-    for (d = 0; d < nBlocks; d++) {
-        cudaStreamCreate(streams + d);
-    }
-    ctx->dPlain = dPlain;
-    ctx->dCrypt = dCrypt;
-    ctx->streams = streams;
-    ctx->nBlocks = nBlocks;
-}
-
-static void encrypt_decrypt_driver(signed char* plain, signed char* crypt,
-    int* key,
-    int plainLength, int nThreadsPerBlock,
-    device_context* ctx)
-{
-    int d = 0;
     cudaDeviceProp info;
     CHECK(cudaGetDeviceProperties(&info, 0));
-    int nChunk = plainLength / CHUNK_SIZE;
-    int nThreadBlocks = (nChunk + nThreadsPerBlock - 1) / nThreadsPerBlock;
+    int nThreadsPerBlock = 512;
+    nChunks = plainLength / CHUNK_SIZE;
+    nBlocks = (nChunks + BLOCK_SIZE_IN_CHUNKS - 1) / BLOCK_SIZE_IN_CHUNKS;
+    int nThreadBlocks = (nChunks + nThreadsPerBlock - 1) / nThreadsPerBlock;
+    // int nThreadBlocks = (BLOCK_SIZE_IN_CHUNKS + nThreadsPerBlock - 1) / nThreadsPerBlock;
     if (nThreadBlocks > info.maxGridSize[0]) {
         nThreadBlocks = info.maxGridSize[0];
     }
-    cudaMemcpyToSymbolAsync(dkey, key, KEY_LENGTH * sizeof(unsigned char), 0, cudaMemcpyHostToDevice, (ctx->streams[0]));
-    cudaStreamSynchronize(ctx->streams[0]);
-    for (d = 0; d < ctx->nBlocks; d++) {
-        int blockOffset = d * BLOCK_SIZE_IN_CHUNKS * CHUNK_SIZE;
+
+    CHECK(cudaEventCreate(&start, 0));
+    finishes = (cudaEvent_t*)malloc(sizeof(cudaEvent_t) * nBlocks);
+    streams = (cudaStream_t*)malloc(sizeof(cudaStream_t) * nBlocks);
+
+    for (b = 0; b < nBlocks; b++) {
+        CHECK(cudaStreamCreate(streams + b));
+        CHECK(cudaEventCreate(finishes + b));
+    }
+
+    CHECK(cudaMalloc((void**)&dPlain,
+        plainLength * sizeof(signed char)));
+    CHECK(cudaMalloc((void**)&dCrypt,
+        plainLength * sizeof(signed char)));
+    CHECK(cudaMalloc((void**)&dKey, KEY_LENGTH * sizeof(int)));
+
+    CHECK(cudaEventRecord(start, streams[0]));
+    CHECK(cudaMemcpyAsync(dKey, key, KEY_LENGTH * sizeof(int),
+        cudaMemcpyHostToDevice, streams[0]));
+    CHECK(cudaStreamSynchronize(streams[0]));
+
+    for (b = 0; b < nBlocks; b++) {
+        int blockOffset = b * BLOCK_SIZE_IN_CHUNKS * CHUNK_SIZE;
         int localChunks = BLOCK_SIZE_IN_CHUNKS;
 
-        if (d * BLOCK_SIZE_IN_CHUNKS + localChunks > nChunk) {
-            localChunks = nChunk - d * BLOCK_SIZE_IN_CHUNKS;
+        if (b * BLOCK_SIZE_IN_CHUNKS + localChunks > nChunks) {
+            localChunks = nChunks - b * BLOCK_SIZE_IN_CHUNKS;
         }
-        cudaMemcpyAsync(ctx->dPlain + blockOffset, plain + blockOffset, localChunks * CHUNK_SIZE * sizeof(signed char), cudaMemcpyHostToDevice,
-            ctx->streams[d]);
-        dim3 block(nThreadsPerBlock);
-        dim3 grid((localChunks + nThreadsPerBlock - 1) / nThreadsPerBlock);
-        d_encrypt_decrypt<<<grid, block, 0, ctx->streams[d]>>>(ctx->dPlain + blockOffset, ctx->dCrypt + blockOffset, localChunks);
-        cudaMemcpyAsync(crypt + blockOffset, ctx->dCrypt + blockOffset, localChunks * CHUNK_SIZE * sizeof(signed char), cudaMemcpyDeviceToHost, ctx->streams[d]);
-    }
-}
 
-static void cleanup_context(device_context* ctx)
-{
-    for (int d = 0; d < ctx->nBlocks; d++) {
-        cudaStreamDestroy(ctx->streams[d]);
+        CHECK(cudaMemcpyAsync(dPlain + blockOffset, plain + blockOffset,
+            localChunks * CHUNK_SIZE * sizeof(signed char),
+            cudaMemcpyHostToDevice, streams[b]));
+
+        encrypt_decrypt<<<nThreadBlocks, nThreadsPerBlock, 0, streams[b]>>>(
+            dPlain + blockOffset, dCrypt + blockOffset, dKey, localChunks);
+        CHECK(cudaMemcpyAsync(crypt + blockOffset, dCrypt + blockOffset,
+            localChunks * CHUNK_SIZE * sizeof(signed char),
+            cudaMemcpyDeviceToHost, streams[b]));
+        CHECK(cudaEventRecord(finishes[b], streams[b]));
     }
-    // delete[] ctx;
+
+    CHECK(cudaDeviceSynchronize());
+
+    float maxElapsed = 0.0;
+
+    for (b = 0; b < nBlocks; b++) {
+        float elapsed;
+        CHECK(cudaEventElapsedTime(&elapsed, start, finishes[b]));
+        maxElapsed = elapsed > maxElapsed ? elapsed : maxElapsed;
+    }
+
+    printf("Processed %d bytes in %f ms ( %f KB/ms )\n", plainLength,
+        maxElapsed, ((float)plainLength / maxElapsed) / 1024.0f);
+
+    for (b = 0; b < nBlocks; b++) {
+        CHECK(cudaStreamDestroy(streams[b]));
+        CHECK(cudaEventDestroy(finishes[b]));
+    }
+
+    free(streams);
+    free(finishes);
+    CHECK(cudaEventDestroy(start));
+
+    CHECK(cudaFree(dPlain));
+    CHECK(cudaFree(dCrypt));
+    CHECK(cudaFree(dKey));
 }
 
 /*
@@ -344,11 +357,9 @@ int main(int argc, char** argv)
     int16_t* userkey;
     int* key;
     action a;
-    cudaEvent_t startEvent, finishEvent;
 
-    if (argc != 6) {
-        printf("usage: %s <encrypt|decrypt> <file.in> <file.out> <key.file> "
-               "<threads-per-block>\n",
+    if (argc != 5) {
+        printf("usage: %s <encrypt|decrypt> <file.in> <file.out> <key.file>\n",
             argv[0]);
         return (1);
     }
@@ -389,8 +400,6 @@ int main(int argc, char** argv)
         return (1);
     }
 
-    int nThreadsPerBlock = atoi(argv[5]);
-
     keyFileLength = getFileLength(keyfile);
 
     if (keyFileLength != sizeof(*userkey) * USERKEY_LENGTH) {
@@ -429,81 +438,7 @@ int main(int argc, char** argv)
     readInputData(in, textLen, &text, &crypt);
     fclose(in);
 
-    int nDevices;
-
-    if (cudaGetDeviceCount(&nDevices) == cudaErrorNoDevice) {
-        // If no devices are found, run all computation on the CPU.
-        double overall_start = cpuSecond();
-        h_encrypt_decrypt(text, crypt, key, textLen);
-        double overall_finish = cpuSecond();
-        double overall_ms = 1000.0 * (overall_finish - overall_start);
-        printf("Processed %d bytes in %.3f s on CPU ( %.4f KB/ms )\n",
-            textLen, overall_ms,
-            ((float)textLen / overall_ms) / 1024.0f);
-    } else {
-        device_context* ctx = new device_context[nDevices];
-        int nTotalChunks = textLen / CHUNK_SIZE;
-        int chunksPerDevice = (nTotalChunks + nDevices - 1) / nDevices;
-        int d;
-        for (d = 0; d < nDevices; d++) {
-            cudaSetDevice(d);
-            int len = chunksPerDevice * CHUNK_SIZE;
-            int start = d * len;
-            if (start + len > textLen) {
-                len = textLen - start;
-            }
-
-            init_context(ctx + d, len);
-        }
-        CHECK(cudaEventCreate(&startEvent));
-        CHECK(cudaEventCreate(&finishEvent));
-
-        /*
-         * Iterate over each device, launching a subset of the total chunks at
-         * a time.
-         */
-        double overall_start = cpuSecond();
-        CHECK(cudaEventRecord(startEvent));
-
-        for (d = 0; d < nDevices; d++) {
-            cudaSetDevice(d);
-            int len = chunksPerDevice * CHUNK_SIZE;
-            int start = d * len;
-            if (start + len > textLen) {
-                len = textLen - start;
-            }
-            encrypt_decrypt_driver(text + start, crypt + start, key, len, nThreadsPerBlock, ctx + d);
-        }
-
-        CHECK(cudaEventRecord(finishEvent));
-
-        // Wait for each device to finish its work.
-        for (d = 0; d < nDevices; d++) {
-            CHECK(cudaSetDevice(d));
-            CHECK(cudaDeviceSynchronize());
-        }
-
-        double overall_finish = cpuSecond();
-
-        for (d = 0; d < nDevices; d++) {
-            // Clean up any CUDA resource allocated for this device.
-            CHECK(cudaSetDevice(d));
-            cleanup_context(ctx + d);
-        }
-
-        float gpuElapsed;
-        CHECK(cudaEventElapsedTime(&gpuElapsed, startEvent, finishEvent));
-        printf("Processed %d bytes in %.3f ms on GPUs ( %.4f KB/ms )\n",
-            textLen, gpuElapsed, ((float)textLen / gpuElapsed) / 1024.0f);
-        // Display the aggregate performance of all devices.
-        double overall_elapsed_ms = 1000.0 * (overall_finish - overall_start);
-        printf("In total, processed %d bytes in %.3f ms on %d devices\n",
-            textLen, overall_elapsed_ms, nDevices);
-        printf("Aggregate bandwith = %.4f KB/ms\n",
-            (float)(textLen / 1024) / overall_elapsed_ms);
-        // free(ctx);
-        delete[] ctx;
-    }
+    encrypt_decrypt_driver(text, crypt, key, textLen);
 
     if (fwrite(crypt, sizeof(signed char), textLen, out) != textLen) {
         fprintf(stderr, "Failed writing crypt to %s\n", argv[3]);
