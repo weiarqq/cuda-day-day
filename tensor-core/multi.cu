@@ -69,7 +69,7 @@ int main()
     // 4. 配置执行参数
     // 每个 Warp 处理 16x16 的块
     // 每个 Block 配置为 128x4 线程（包含 16 个 Warp），即处理 (4*16)x(4*16) = 64x64 的区域
-    dim3 blockDim(128, 4);
+    dim3 blockDim(32, 16);
     dim3 gridDim((M + (WMMA_M * blockDim.x / 32) - 1) / (WMMA_M * blockDim.x / 32),
         (N + (WMMA_N * blockDim.y) - 1) / (WMMA_N * blockDim.y));
 

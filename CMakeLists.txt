@@ -15,6 +15,8 @@ endif ()
 # 指定C++标准（CUDA也继承此标准）
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_COMPILER "/usr/bin/gcc")
+
 # set(CMAKE_CUDA_STANDARD 17)  # 显式指定CUDA标准
 # set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 
@@ -65,10 +67,10 @@ endif()
 # add_subdirectory(2.编程模型)
 # add_subdirectory(3.执行模型)
 # add_subdirectory(4.全局内存)
-# add_subdirectory(5.共享缓存和常量内存)
+add_subdirectory(5.共享缓存和常量内存)
 # add_subdirectory(6.流和并发)
 # add_subdirectory(7.调整指令级原语)
 # add_subdirectory(8.GPU加速库和openACC)
 # add_subdirectory(9.多GPU编程)
 # add_subdirectory(10.程序实现的注意事项)
-add_subdirectory(tensor_core)
+# add_subdirectory(tensor-core)
