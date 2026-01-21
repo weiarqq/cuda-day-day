@@ -82,7 +82,7 @@ __global__ void gpuRecursiveReduce(int* g_idata, int* g_odata,
         gpuRecursiveReduce<<<1, istride>>>(idata, odata, istride);
 
         // sync all child grids launched in this block
-        __syncthreads();
+        // cudaDeviceSynchronize();
     }
 
     // sync at block level again
