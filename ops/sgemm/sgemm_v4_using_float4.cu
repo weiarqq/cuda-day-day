@@ -62,37 +62,34 @@ void cpu_gemm(float* A, float* B, float* C, const int M, const int N, const int 
     }
 }
 
-template <int BLOCK_SIZE, int BLOCK_SIZE_K>
+#define FETCH_FLOAT4(pointer) (reinterpret_cast<float4*>(&pointer))[0]
+template <int M_NUM_PER_BLOCK, int N_NUM_PER_BLOCK, int K_NUM_PER_BLOCK, int NUM_PER_THREAD>
 __global__ void sgemm(float* A, float* B, float* C, const int M, const int N, const int K)
 {
-    unsigned int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    unsigned int idy = blockIdx.y * blockDim.y + threadIdx.y;
-    // 假设A:[m, k] B:[k, n], c:[m, n]
-    // 当前block 线程范围 x:[blockIdx.x * blockDim.x, blockIdx.x * blockDim.x + blockDim.x] ==> C的 n维度
-    //                  y:[blockIdx.y * blockDim.y, blockIdx.y * blockDim.y + blockDim.y] ==> C的 m维度
 
-    float* A_data = A + blockIdx.y * blockDim.y * K;
-    float* B_data = B + blockIdx.x * blockDim.x;
+    float* A_data = A + blockIdx.y * M_NUM_PER_BLOCK * K;
+    float* B_data = B + blockIdx.x * N_NUM_PER_BLOCK;
 
-    if (idx >= N || idy >= M)
-        return;
-    __shared__ float smem_A[BLOCK_SIZE][BLOCK_SIZE_K];
-    __shared__ float smem_B[BLOCK_SIZE_K][BLOCK_SIZE];
-    // 此处 一个block需要处理 BLOCK_SIZE * BLOCK_SIZE的元素，需要加载 A：BLOCK_SIZE*K 和 B: K*BLOCK_SIZE
+    __shared__ float smem_A[M_NUM_PER_BLOCK][K_NUM_PER_BLOCK];
+    __shared__ float smem_B[K_NUM_PER_BLOCK][N_NUM_PER_BLOCK];
 
-    // 可用资源 一个block BLOCK_SIZE * BLOCK_SIZE 的线程数，用来 加载 BLOCK_SIZE*K + K*BLOCK_SIZE的元素，则每个线程加载 A的K/BLOCK_SIZE + B的 K/BLOCK_SIZE的元素
-    for (int index = 0; index < K; index += blockDim.x) {
-        smem_A[threadIdx.y][threadIdx.x + index] = A_data[threadIdx.y * K + threadIdx.x + index];
-        smem_B[threadIdx.y + index][threadIdx.x] = B_data[(threadIdx.y + index) * N + threadIdx.x];
+    float temp[NUM_PER_THREAD] = { 0.f };
+    for (int index = 0; index < K; index += K_NUM_PER_BLOCK) {
+
+        FETCH_FLOAT4(smem_A[threadIdx.y][threadIdx.x * NUM_PER_THREAD]) = FETCH_FLOAT4(A_data[threadIdx.y * K + index + threadIdx.x * NUM_PER_THREAD]);
+        FETCH_FLOAT4(smem_B[threadIdx.y][threadIdx.x * NUM_PER_THREAD]) = FETCH_FLOAT4(B_data[(threadIdx.y + index) * N + threadIdx.x * NUM_PER_THREAD]); // 必须按行优先 来 单线程计算NUM_PER_THREAD个; 比如连续内存
+        __syncthreads();
+
+        for (int j = 0; j < NUM_PER_THREAD; j++) {
+            for (int k = 0; k < K_NUM_PER_BLOCK; k++) {
+                temp[j] += smem_A[threadIdx.y][k] * smem_B[k][threadIdx.x * NUM_PER_THREAD + j];
+            }
+        }
+        __syncthreads();
     }
-    __syncthreads();
-
-    float temp = 0.f;
-    for (int k = 0; k < K; k++) {
-        temp += smem_A[threadIdx.y][k] * smem_B[k][threadIdx.x];
-    }
-
-    C[idy * N + idx] = temp;
+    float* C_ptr = C + blockIdx.y * M_NUM_PER_BLOCK * N + blockIdx.x * N_NUM_PER_BLOCK;
+    for (int q = 0; q < NUM_PER_THREAD; q++)
+        C_ptr[threadIdx.y * N + threadIdx.x * NUM_PER_THREAD + q] = temp[q];
 }
 
 int main(int argc, char** argv)
@@ -107,13 +104,17 @@ int main(int argc, char** argv)
     CHECK(cudaSetDevice(dev));
 
     // 共享内存放不下这么大数据 改为 128
-    int m = 128;
-    int n = 128;
-    const int k = 128;
+    int m = 1024;
+    int n = 1024;
+    const int k = 1024;
 
-    const int BLOCK_SIZE = 16;
-    dim3 block(BLOCK_SIZE, BLOCK_SIZE);
-    dim3 grid((m + block.x - 1) / block.x, (n + block.y - 1) / block.y);
+    constexpr int M_NUM_PER_BLOCK = 32;
+    constexpr int N_NUM_PER_BLOCK = 32;
+    constexpr int K_NUM_PER_BLOCK = 32;
+    constexpr int NUM_PER_THREAD = 4;
+
+    dim3 block(8, 32); // X维度 一个线程读取4个元素 并计算4个元素，所以是 8 , 8*NUM_PER_THREAD = M_NUM_PER_BLOCK
+    dim3 grid(m / N_NUM_PER_BLOCK, n / M_NUM_PER_BLOCK);
 
     std::vector<float> h_A(m * k);
     std::vector<float> h_B(n * k);
@@ -140,7 +141,7 @@ int main(int argc, char** argv)
     for (int q = 0; q < 10; q++) {
 
         iStart = cpuSecond();
-        sgemm<BLOCK_SIZE, k><<<grid, block>>>(d_A, d_B, d_C, m, n, k);
+        sgemm<M_NUM_PER_BLOCK, N_NUM_PER_BLOCK, K_NUM_PER_BLOCK, NUM_PER_THREAD><<<grid, block>>>(d_A, d_B, d_C, m, n, k);
         CHECK(cudaDeviceSynchronize());
         iElaps = cpuSecond() - iStart;
         CHECK(cudaMemcpy(hd_C.data(), d_C, m * n * sizeof(float), cudaMemcpyDeviceToHost));

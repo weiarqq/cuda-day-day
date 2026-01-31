@@ -1,29 +1,29 @@
 
-#include <iostream>
 #include <cuda_runtime.h>
+#include <iostream>
 
-#include "common/tester.h"
 #include "common/common.h"
+#include "common/tester.h"
 
 #define WARP_SIZE 32
-#define LDST32BITS(value) (reinterpret_cast<half2 *>(&(value))[0])
-#define LDST64BITS(value) (reinterpret_cast<float2 *>(&(value))[0])
+#define LDST32BITS(value) (reinterpret_cast<half2*>(&(value))[0])
+#define LDST64BITS(value) (reinterpret_cast<float2*>(&(value))[0])
 
 using namespace nvcuda;
 
 // m16n16k16 wmma  + tile MMA with smem,  A, B, C: all row_major.
 template <const int WMMA_M = 16, const int WMMA_N = 16, const int WMMA_K = 16,
-          const int WMMA_TILE_M = 4, const int WMMA_TILE_N = 2>
+    const int WMMA_TILE_M = 4, const int WMMA_TILE_N = 2>
 __global__ void hgemm_wmma_m16n16k16_mma4x2_kernel(
-    half *A, half *B, half *C, int M, int N, int K)
+    half* A, half* B, half* C, int M, int N, int K)
 {
     // 256 threads(8 warps) per block.
     const int bx = blockIdx.x;
     const int by = blockIdx.y;
     const int NUM_K_TILES = div_ceil(K, WMMA_K);
-    constexpr int BM = WMMA_M * WMMA_TILE_M;      // 16x4=64
-    constexpr int BN = WMMA_N * WMMA_TILE_N;      // 16x2=32
-    constexpr int BK = WMMA_K;                    // 16
+    constexpr int BM = WMMA_M * WMMA_TILE_M; // 16x4=64
+    constexpr int BN = WMMA_N * WMMA_TILE_N; // 16x2=32
+    constexpr int BK = WMMA_K; // 16
     __shared__ half s_a[BM][BK], s_b[WMMA_K][BN]; // 64x16x2=2KB, 16x32x2=1KB
 
     // 要保证相同的warp下thread执行相同的指令
@@ -34,17 +34,18 @@ __global__ void hgemm_wmma_m16n16k16_mma4x2_kernel(
     const int tid = threadIdx.y * blockDim.x + threadIdx.x;
     const int warp_id = tid / WARP_SIZE; // 0~7 warp_id within block
     const int lane_id = tid % WARP_SIZE; // 0~31
-    const int warp_m = warp_id / 2;      // 0,1,2,3
-    const int warp_n = warp_id % 2;      // 0,1
+    const int warp_m = warp_id / 2; // 0,1,2,3
+    const int warp_n = warp_id % 2; // 0,1
 
-    // 256线程分别load s_a=64x16, s_b=16x32
+    // 256线程分别load s_a=64x16(16 * 16 * 4), s_b=16x32 (16 * 16 * 2)
     // 64*16/256=4, half4, 16x32/256=2, half2
     // s_a, 64*16, 每个线程load 4 half, 每行需要4线程，64行，共256线程
-    const int load_smem_a_m = tid / 4;       // 0~63
-    const int load_smem_a_k = (tid % 4) * 4; // 0,4,12,...
-    // s_b, 16x32, 每个线程load 2 half, 每行需要8线程，32行，共256线程
-    const int load_smem_b_k = tid / 16;                // 0~16
-    const int load_smem_b_n = (tid % 16) * 2;          // 0,2,4,...,32
+    const int load_smem_a_m = tid / 4; // 0~63    每行16个元素，需要4个线程来搬运，所以每行的id 为 tid/4
+    const int load_smem_a_k = (tid % 4) * 4; // 0,4,12,...  线程在行内的起始列索引 (0, 4, 8, 12)，一行需要4个，搬运列的线程ID映射为 tid % 4
+
+    const int load_smem_b_k = tid / 16; // 0~16 32个元素，每个线程2个元素，也就是32/2 =16， 每行需要16个线程
+    const int load_smem_b_n = (tid % 16) * 2; // 0,2,4,...,32 线程在行内的起始列索引, 一行需要16个，搬运列的线程ID映射为 tid % 16
+
     const int load_gmem_a_m = by * BM + load_smem_a_m; // global m
     const int load_gmem_b_n = bx * BN + load_smem_b_n; // global n
 
@@ -58,8 +59,7 @@ __global__ void hgemm_wmma_m16n16k16_mma4x2_kernel(
     wmma::fragment<wmma::matrix_b, WMMA_M, WMMA_N, WMMA_K, half, wmma::row_major> B_frag;
 
 #pragma unroll
-    for (int k = 0; k < NUM_K_TILES; ++k)
-    {
+    for (int k = 0; k < NUM_K_TILES; ++k) {
         int load_gmem_a_k = k * WMMA_K + load_smem_a_k; // global col of a
         int load_gmem_a_addr = load_gmem_a_m * K + load_gmem_a_k;
         int load_gmem_b_k = k * WMMA_K + load_smem_b_k; // global row of b
@@ -81,10 +81,10 @@ __global__ void hgemm_wmma_m16n16k16_mma4x2_kernel(
     const int store_gmem_a_m = by * BM + warp_m * WMMA_M;
     const int store_gmem_a_n = bx * BN + warp_n * WMMA_N;
     wmma::store_matrix_sync(C + store_gmem_a_m * N + store_gmem_a_n, C_frag, N,
-                            wmma::mem_row_major);
+        wmma::mem_row_major);
 }
 
-void hgemm_wmma_m16n16k16_mma4x2(half *A, half *B, half *C, int M, int N, int K)
+void hgemm_wmma_m16n16k16_mma4x2(half* A, half* B, half* C, int M, int N, int K)
 {
     constexpr int WMMA_M = 16;
     constexpr int WMMA_N = 16;
@@ -97,7 +97,7 @@ void hgemm_wmma_m16n16k16_mma4x2(half *A, half *B, half *C, int M, int N, int K)
     hgemm_wmma_m16n16k16_mma4x2_kernel<WMMA_M, WMMA_N, WMMA_K, WMMA_TILE_M, WMMA_TILE_N><<<grid, block>>>(A, B, C, M, N, K);
 }
 
-int main(int argc, char *argv[])
+int main(int argc, char* argv[])
 {
     Tester tester(512, 2048, 1024, 1, 10, 100, false);
     tester.evaluate(hgemm_wmma_m16n16k16_mma4x2, "hgemm_wmma_m16n16k16_mma4x2");

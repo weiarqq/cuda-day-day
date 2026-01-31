@@ -58,7 +58,6 @@ __global__ void cuda_sgemm(float *A_ptr, float *B_ptr, float *C_ptr, const int M
     const int y = threadIdx.y + blockDim.y * blockIdx.y;
     float *A_ptr_start = A_ptr + blockDim.y * blockIdx.y * K;
     float *B_ptr_start = B_ptr + blockDim.x * blockIdx.x;
-
     __shared__ float a_shared[BLOCK_SIZE][K_];
     __shared__ float b_shared[K_][BLOCK_SIZE];
 

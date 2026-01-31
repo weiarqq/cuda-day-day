@@ -62,37 +62,63 @@ void cpu_gemm(float* A, float* B, float* C, const int M, const int N, const int 
     }
 }
 
-template <int BLOCK_SIZE, int BLOCK_SIZE_K>
+#define FETCH_FLOAT4(pointer) (reinterpret_cast<float4*>(&pointer))[0]
+template <int M_NUM_PER_BLOCK, int N_NUM_PER_BLOCK, int K_NUM_PER_BLOCK, int NUM_PER_THREAD>
 __global__ void sgemm(float* A, float* B, float* C, const int M, const int N, const int K)
 {
-    unsigned int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    unsigned int idy = blockIdx.y * blockDim.y + threadIdx.y;
-    // 假设A:[m, k] B:[k, n], c:[m, n]
-    // 当前block 线程范围 x:[blockIdx.x * blockDim.x, blockIdx.x * blockDim.x + blockDim.x] ==> C的 n维度
-    //                  y:[blockIdx.y * blockDim.y, blockIdx.y * blockDim.y + blockDim.y] ==> C的 m维度
 
-    float* A_data = A + blockIdx.y * blockDim.y * K;
-    float* B_data = B + blockIdx.x * blockDim.x;
+    float* A_data = A + blockIdx.y * M_NUM_PER_BLOCK * K;
+    float* B_data = B + blockIdx.x * N_NUM_PER_BLOCK;
 
-    if (idx >= N || idy >= M)
-        return;
-    __shared__ float smem_A[BLOCK_SIZE][BLOCK_SIZE_K];
-    __shared__ float smem_B[BLOCK_SIZE_K][BLOCK_SIZE];
-    // 此处 一个block需要处理 BLOCK_SIZE * BLOCK_SIZE的元素，需要加载 A：BLOCK_SIZE*K 和 B: K*BLOCK_SIZE
+    constexpr int REG_NUM = 2;
+    unsigned int block_tid = threadIdx.y * blockDim.x + threadIdx.x;
+    unsigned int smem_idx = block_tid % (N_NUM_PER_BLOCK / REG_NUM);
+    unsigned int smem_idy = block_tid / (N_NUM_PER_BLOCK / REG_NUM);
 
-    // 可用资源 一个block BLOCK_SIZE * BLOCK_SIZE 的线程数，用来 加载 BLOCK_SIZE*K + K*BLOCK_SIZE的元素，则每个线程加载 A的K/BLOCK_SIZE + B的 K/BLOCK_SIZE的元素
-    for (int index = 0; index < K; index += blockDim.x) {
-        smem_A[threadIdx.y][threadIdx.x + index] = A_data[threadIdx.y * K + threadIdx.x + index];
-        smem_B[threadIdx.y + index][threadIdx.x] = B_data[(threadIdx.y + index) * N + threadIdx.x];
+    __shared__ float smem_A[M_NUM_PER_BLOCK][K_NUM_PER_BLOCK];
+    __shared__ float smem_B[K_NUM_PER_BLOCK][N_NUM_PER_BLOCK];
+    float reg_A[REG_NUM] = { 0.f };
+    float reg_B[REG_NUM] = { 0.f };
+    float temp[REG_NUM][REG_NUM] = { 0.f };
+    for (int index = 0; index < K; index += K_NUM_PER_BLOCK) {
+
+        FETCH_FLOAT4(smem_A[threadIdx.y][threadIdx.x * NUM_PER_THREAD]) = FETCH_FLOAT4(A_data[threadIdx.y * K + index + threadIdx.x * NUM_PER_THREAD]); // 每个线程取 K/K_NUM_PER_BLOCK个 同时 float4 则为 4*K/K_NUM_PER_BLOCK, float4和循环都是在K维度取
+        FETCH_FLOAT4(smem_B[threadIdx.y][threadIdx.x * NUM_PER_THREAD]) = FETCH_FLOAT4(B_data[(threadIdx.y + index) * N + threadIdx.x * NUM_PER_THREAD]); // float4 在N维度取， 循环是单个线程处理 K维度的
+        __syncthreads();
+
+        for (int k = 0; k < K_NUM_PER_BLOCK; k++) {
+#pragma unroll
+            for (int ri = 0; ri < REG_NUM; ri++) {
+                reg_A[ri] = smem_A[smem_idy * REG_NUM + ri][k];
+            }
+#pragma unroll
+            for (int rj = 0; rj < REG_NUM; rj++) {
+                reg_B[rj] = smem_B[k][smem_idx * REG_NUM + rj];
+            }
+            // reg_A[0] = smem_A[smem_idy * 2][k];
+            // reg_A[1] = smem_A[smem_idy * 2 + 1][k];
+
+            // reg_B[0] = smem_B[k][smem_idx * 2];
+            // reg_B[1] = smem_B[k][smem_idx * 2 + 1];
+            temp[0][0] += reg_A[0] * reg_B[0];
+            temp[0][1] += reg_A[0] * reg_B[1];
+            temp[1][0] += reg_A[1] * reg_B[0];
+            temp[1][1] += reg_A[1] * reg_B[1];
+
+            // for (int i = 0; i < REG_NUM; i++) {
+            //     for (int j = 0; j < REG_NUM; j++) {
+            //         temp[i][j] += reg_A[i] * reg_B[j];
+            //     }
+            // }
+        }
+        __syncthreads();
     }
-    __syncthreads();
-
-    float temp = 0.f;
-    for (int k = 0; k < K; k++) {
-        temp += smem_A[threadIdx.y][k] * smem_B[k][threadIdx.x];
+    float* C_ptr = C + blockIdx.y * M_NUM_PER_BLOCK * N + blockIdx.x * N_NUM_PER_BLOCK;
+    for (int i = 0; i < REG_NUM; i++) {
+        for (int j = 0; j < REG_NUM; j++) {
+            C_ptr[N * (smem_idy * 2 + i) + smem_idx * 2 + j] = temp[i][j];
+        }
     }
-
-    C[idy * N + idx] = temp;
 }
 
 int main(int argc, char** argv)
@@ -107,13 +133,17 @@ int main(int argc, char** argv)
     CHECK(cudaSetDevice(dev));
 
     // 共享内存放不下这么大数据 改为 128
-    int m = 128;
-    int n = 128;
-    const int k = 128;
+    int m = 1024;
+    int n = 1024;
+    const int k = 1024;
 
-    const int BLOCK_SIZE = 16;
-    dim3 block(BLOCK_SIZE, BLOCK_SIZE);
-    dim3 grid((m + block.x - 1) / block.x, (n + block.y - 1) / block.y);
+    constexpr int M_NUM_PER_BLOCK = 32;
+    constexpr int N_NUM_PER_BLOCK = 32;
+    constexpr int K_NUM_PER_BLOCK = 32;
+    constexpr int NUM_PER_THREAD = 4;
+
+    dim3 block(8, 32); // X维度 一个线程读取4个元素 并计算4个元素，所以是 8 , 8*NUM_PER_THREAD = M_NUM_PER_BLOCK
+    dim3 grid(n / N_NUM_PER_BLOCK, m / M_NUM_PER_BLOCK);
 
     std::vector<float> h_A(m * k);
     std::vector<float> h_B(n * k);
@@ -140,7 +170,7 @@ int main(int argc, char** argv)
     for (int q = 0; q < 10; q++) {
 
         iStart = cpuSecond();
-        sgemm<BLOCK_SIZE, k><<<grid, block>>>(d_A, d_B, d_C, m, n, k);
+        sgemm<M_NUM_PER_BLOCK, N_NUM_PER_BLOCK, K_NUM_PER_BLOCK, NUM_PER_THREAD><<<grid, block>>>(d_A, d_B, d_C, m, n, k);
         CHECK(cudaDeviceSynchronize());
         iElaps = cpuSecond() - iStart;
         CHECK(cudaMemcpy(hd_C.data(), d_C, m * n * sizeof(float), cudaMemcpyDeviceToHost));

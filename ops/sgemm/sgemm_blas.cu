@@ -1,11 +1,11 @@
-#include <cassert>
-#include <cstdio>
-#include <cuda_runtime.h>
+
+#include "assert.h"
 #include <stdio.h>
 #include <stdlib.h>
-#include <sys/time.h>
-#include <vector>
 
+// CUDA runtime
+#include <cublas_v2.h>
+#include <cuda_runtime.h>
 #define CHECK(call)                                                             \
     {                                                                           \
         const cudaError_t error = call;                                         \
@@ -41,14 +41,6 @@ void checkResult(float* hostRef, float* gpuRef, const int N)
     return;
 }
 
-double cpuSecond()
-{
-    struct timeval tp;
-    struct timezone tzp;
-    int i = gettimeofday(&tp, &tzp);
-    return ((double)tp.tv_sec + (double)tp.tv_usec * 1.e-6);
-}
-
 void cpu_gemm(float* A, float* B, float* C, const int M, const int N, const int K)
 {
     for (int m = 0; m < M; m++) {
@@ -62,39 +54,6 @@ void cpu_gemm(float* A, float* B, float* C, const int M, const int N, const int 
     }
 }
 
-template <int BLOCK_SIZE, int BLOCK_SIZE_K>
-__global__ void sgemm(float* A, float* B, float* C, const int M, const int N, const int K)
-{
-    unsigned int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    unsigned int idy = blockIdx.y * blockDim.y + threadIdx.y;
-    // 假设A:[m, k] B:[k, n], c:[m, n]
-    // 当前block 线程范围 x:[blockIdx.x * blockDim.x, blockIdx.x * blockDim.x + blockDim.x] ==> C的 n维度
-    //                  y:[blockIdx.y * blockDim.y, blockIdx.y * blockDim.y + blockDim.y] ==> C的 m维度
-
-    float* A_data = A + blockIdx.y * blockDim.y * K;
-    float* B_data = B + blockIdx.x * blockDim.x;
-
-    if (idx >= N || idy >= M)
-        return;
-    __shared__ float smem_A[BLOCK_SIZE][BLOCK_SIZE_K];
-    __shared__ float smem_B[BLOCK_SIZE_K][BLOCK_SIZE];
-    // 此处 一个block需要处理 BLOCK_SIZE * BLOCK_SIZE的元素，需要加载 A：BLOCK_SIZE*K 和 B: K*BLOCK_SIZE
-
-    // 可用资源 一个block BLOCK_SIZE * BLOCK_SIZE 的线程数，用来 加载 BLOCK_SIZE*K + K*BLOCK_SIZE的元素，则每个线程加载 A的K/BLOCK_SIZE + B的 K/BLOCK_SIZE的元素
-    for (int index = 0; index < K; index += blockDim.x) {
-        smem_A[threadIdx.y][threadIdx.x + index] = A_data[threadIdx.y * K + threadIdx.x + index];
-        smem_B[threadIdx.y + index][threadIdx.x] = B_data[(threadIdx.y + index) * N + threadIdx.x];
-    }
-    __syncthreads();
-
-    float temp = 0.f;
-    for (int k = 0; k < K; k++) {
-        temp += smem_A[threadIdx.y][k] * smem_B[k][threadIdx.x];
-    }
-
-    C[idy * N + idx] = temp;
-}
-
 int main(int argc, char** argv)
 {
 
@@ -106,13 +65,12 @@ int main(int argc, char** argv)
     printf("device %d: %s \n", dev, deviceProp.name);
     CHECK(cudaSetDevice(dev));
 
-    // 共享内存放不下这么大数据 改为 128
-    int m = 128;
-    int n = 128;
-    const int k = 128;
+    int m = 2048;
+    int n = 2048;
+    int k = 2048;
 
-    const int BLOCK_SIZE = 16;
-    dim3 block(BLOCK_SIZE, BLOCK_SIZE);
+    int p = 128;
+    dim3 block(m / p, n / p);
     dim3 grid((m + block.x - 1) / block.x, (n + block.y - 1) / block.y);
 
     std::vector<float> h_A(m * k);
@@ -140,7 +98,7 @@ int main(int argc, char** argv)
     for (int q = 0; q < 10; q++) {
 
         iStart = cpuSecond();
-        sgemm<BLOCK_SIZE, k><<<grid, block>>>(d_A, d_B, d_C, m, n, k);
+        sgemm<<<grid, block>>>(d_A, d_B, d_C, m, n, k);
         CHECK(cudaDeviceSynchronize());
         iElaps = cpuSecond() - iStart;
         CHECK(cudaMemcpy(hd_C.data(), d_C, m * n * sizeof(float), cudaMemcpyDeviceToHost));

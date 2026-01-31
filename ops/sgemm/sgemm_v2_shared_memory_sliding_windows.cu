@@ -62,7 +62,7 @@ void cpu_gemm(float* A, float* B, float* C, const int M, const int N, const int 
     }
 }
 
-template <int BLOCK_SIZE, int BLOCK_SIZE_K>
+template <int BLOCK_SIZE>
 __global__ void sgemm(float* A, float* B, float* C, const int M, const int N, const int K)
 {
     unsigned int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -76,22 +76,20 @@ __global__ void sgemm(float* A, float* B, float* C, const int M, const int N, co
 
     if (idx >= N || idy >= M)
         return;
-    __shared__ float smem_A[BLOCK_SIZE][BLOCK_SIZE_K];
-    __shared__ float smem_B[BLOCK_SIZE_K][BLOCK_SIZE];
+    __shared__ float smem_A[BLOCK_SIZE][BLOCK_SIZE];
+    __shared__ float smem_B[BLOCK_SIZE][BLOCK_SIZE];
     // 此处 一个block需要处理 BLOCK_SIZE * BLOCK_SIZE的元素，需要加载 A：BLOCK_SIZE*K 和 B: K*BLOCK_SIZE
-
+    float temp = 0.f;
     // 可用资源 一个block BLOCK_SIZE * BLOCK_SIZE 的线程数，用来 加载 BLOCK_SIZE*K + K*BLOCK_SIZE的元素，则每个线程加载 A的K/BLOCK_SIZE + B的 K/BLOCK_SIZE的元素
     for (int index = 0; index < K; index += blockDim.x) {
-        smem_A[threadIdx.y][threadIdx.x + index] = A_data[threadIdx.y * K + threadIdx.x + index];
-        smem_B[threadIdx.y + index][threadIdx.x] = B_data[(threadIdx.y + index) * N + threadIdx.x];
+        smem_A[threadIdx.y][threadIdx.x] = A_data[threadIdx.y * K + threadIdx.x + index];
+        smem_B[threadIdx.y][threadIdx.x] = B_data[(threadIdx.y + index) * N + threadIdx.x];
+        __syncthreads();
+        for (int k = 0; k < blockDim.x; k++) {
+            temp += smem_A[threadIdx.y][k] * smem_B[k][threadIdx.x];
+        }
+        __syncthreads(); // 需要添加同步，确保这一轮算完再读取下一轮的数据，不加 可能出现 这一轮还在算，下一轮的数据被覆盖了
     }
-    __syncthreads();
-
-    float temp = 0.f;
-    for (int k = 0; k < K; k++) {
-        temp += smem_A[threadIdx.y][k] * smem_B[k][threadIdx.x];
-    }
-
     C[idy * N + idx] = temp;
 }
 
@@ -107,9 +105,9 @@ int main(int argc, char** argv)
     CHECK(cudaSetDevice(dev));
 
     // 共享内存放不下这么大数据 改为 128
-    int m = 128;
-    int n = 128;
-    const int k = 128;
+    int m = 1024;
+    int n = 1024;
+    const int k = 1024;
 
     const int BLOCK_SIZE = 16;
     dim3 block(BLOCK_SIZE, BLOCK_SIZE);
@@ -140,7 +138,7 @@ int main(int argc, char** argv)
     for (int q = 0; q < 10; q++) {
 
         iStart = cpuSecond();
-        sgemm<BLOCK_SIZE, k><<<grid, block>>>(d_A, d_B, d_C, m, n, k);
+        sgemm<BLOCK_SIZE><<<grid, block>>>(d_A, d_B, d_C, m, n, k);
         CHECK(cudaDeviceSynchronize());
         iElaps = cpuSecond() - iStart;
         CHECK(cudaMemcpy(hd_C.data(), d_C, m * n * sizeof(float), cudaMemcpyDeviceToHost));

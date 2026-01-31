@@ -5,7 +5,7 @@ nvcc -o bin/sgemm_v0 sgemm_v0_baseline.cu
 使用共享内存，把当前block需要计算的行和列加载到共享内存，提升读取效率
 nvcc -o bin/sgemm_v1 sgemm_v1_shared_memory.cu
 
-每次读取当前block需要的行列 都需要的等待耗时过长，不利于延迟隐藏，每次只加载一段到共享内存，然后计算，再加载下一部分
+每次读取当前block需要的行列 都需要的等待耗时过长,并且占用大量共享内存，不利于延迟隐藏，每次只加载一段到共享内存，然后计算，再加载下一部分
 nvcc -o bin/sgemm_v2 sgemm_v2_shared_memory_sliding_windows.cu
 
 继续优化延迟隐藏，增加每个线程的计算量，每个线程计算结果矩阵的多个元素，以前计算一行 一列 扩展到 计算 多行多列
